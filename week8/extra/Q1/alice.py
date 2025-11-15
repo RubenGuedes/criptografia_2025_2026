@@ -142,11 +142,11 @@ def main():
                 msg = secure_recv(s, ENC_KEY, MAC_KEY, recv_seq)
                 recv_seq += 1
 
-                # send "I would like to have Francesinha" to Bob
-                secure_send(s, "I would like to have Francesinha", ENC_KEY, MAC_KEY, send_seq)
+                # send "I would like to have dinner" to Bob
+                secure_send(s, "I would like to have dinner", ENC_KEY, MAC_KEY, send_seq)
                 send_seq += 1
 
-                # receive "Me too. Aviz?" from Bob
+                # receive "Me too. Same time, same place?" from Bob
                 msg = secure_recv(s, ENC_KEY, MAC_KEY, recv_seq)
                 recv_seq += 1
 

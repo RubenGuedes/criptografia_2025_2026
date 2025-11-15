@@ -148,8 +148,8 @@ def main():
                 msg = secure_recv(conn, ENC_KEY, MAC_KEY, recv_seq)
                 recv_seq += 1
 
-                # send "Me too. Aviz?" to Alice
-                secure_send(conn, "Me too. Aviz?", ENC_KEY, MAC_KEY, send_seq)
+                # send "Me too. Same time, same place?" to Alice
+                secure_send(conn, "Me too. Same time, same place?", ENC_KEY, MAC_KEY, send_seq)
                 send_seq += 1
 
                 # receive "Sure!" from Alice
