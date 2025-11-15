@@ -69,22 +69,22 @@ def miller_rabin(n, m=40):
     return True
 
 
-# 1. Test a known large prime
-large_prime = 104395301
-print(f"Is {large_prime} prime? {miller_rabin(large_prime)}")
+# test a known large prime
+prime_1 = 104395301
+print(f"Is {prime_1} prime? {miller_rabin(prime_1)}")
 
-# 2. Test another known large prime
+# test another known large prime
 prime_2 = 2147483647 
 print(f"Is {prime_2} prime? {miller_rabin(prime_2)}")
 
-# 3. Test a large composite number (product of two primes)
-composite = 104395301 * 104395303
+# test a large composite number (product of two primes)
+composite = prime_1 * prime_2
 print(f"Is {composite} prime? {miller_rabin(composite)}")
 
-# 4. Test a small composite
+# test a small composite
 print(f"Is 561 prime? {miller_rabin(561)}")
 
-# 5. Test trivial cases
+# test trivial cases
 print(f"Is 2 prime? {miller_rabin(2)}")
 print(f"Is 3 prime? {miller_rabin(3)}")
 print(f"Is 100 prime? {miller_rabin(100)}")
