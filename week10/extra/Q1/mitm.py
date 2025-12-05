@@ -1,8 +1,8 @@
 from pwn import *
 import random
 
-g = 2
-p = 7853799659
+PRIME = 9876543211
+GENERATOR = 2
 
 def parse_config(filename):
     with open(filename, "r") as f:
@@ -35,10 +35,10 @@ def init():
     return connections
 
 def generate_secret():
-    return random.randint(1, p)
+    return random.randint(1, PRIME)
 
 def calc_pub(private_exp):
-    return pow(g, private_exp, p)
+    return pow(GENERATOR, private_exp, PRIME)
 
 def bytes_to_int(raw_bytes):
     return int.from_bytes(raw_bytes, "little")
@@ -77,8 +77,8 @@ def exploit(connections):
     r_bob.sendline(int_to_bytes(gd))
 
     # retrieve shared secrets
-    secret_alice = pow(gx, c, p)
-    secret_bob = pow(gy, d, p)
+    secret_alice = pow(gx, c, PRIME)
+    secret_bob = pow(gy, d, PRIME)
 
     print("Shared secret with Alice:", secret_alice)
     print("Shared secret with Bob:", secret_bob)
