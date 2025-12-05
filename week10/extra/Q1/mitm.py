@@ -1,91 +1,97 @@
 from pwn import *
+import random
 
-# --- 1. Setup Network Topology ---
-# Configuration matching our modified config files
-mitm_port_for_alice = 9000  # Alice connects here (config_alice)
-mitm_port_for_bob   = 9001  # Bob connects here (config_bob)
-
-# The actual listeners where Alice and Bob are waiting for input
-real_alice_port = 5075
-real_bob_port   = 5076
-
-# Setup Listeners to catch the victims' outgoing connections
-print(f"[*] Setting up MitM listeners on {mitm_port_for_alice} and {mitm_port_for_bob}...")
-listener_alice = listen(mitm_port_for_alice)
-listener_bob   = listen(mitm_port_for_bob)
-
-print("[*] Waiting for Alice and Bob to start and connect...")
-# We wait for them to connect to us
-alice_incoming = listener_alice.wait_for_connection()
-bob_incoming   = listener_bob.wait_for_connection()
-
-print("[*] Both victims connected to MitM. Establishing connections to their listeners...")
-# Now we connect to their actual listening ports
-to_alice_listener = remote('localhost', real_alice_port)
-to_bob_listener   = remote('localhost', real_bob_port)
-
-# --- 2. Crypto Parameters ---
 g = 2
 p = 7853799659
 
-# Generate MitM's malicious secret
-m = random.randint(1, p)
-gm = pow(g, m, p) # The attacker's public key (g^m)
-print(f"\n[!] Attacker Generated g^m: {gm}")
+def parse_config(filename):
+    with open(filename, "r") as f:
+        lines = f.read().splitlines()
+    return lines[0], int(lines[1])
 
-# --- 3. The Exchange Logic ---
+def init():
+    connections = {}
+    
+    # load configs
+    host_a, port_a = parse_config("config_bob") 
+    host_b, port_b = parse_config("config_alice")
 
-# We need to look at the source code order to prevent deadlock.
-# Bob.py: Sends GY -> Receives GX
-# Alice.py: Receives GY -> Sends GX
+    # establish connections
 
-# STEP A: Intercept Bob's GY
-# Bob connects to his 'remote' (which is us, bob_incoming) and sends GY immediately.
-print("\n[->] Receiving GY from Bob...")
-gy_bytes = bob_incoming.recvline() # Read line cleanly including newline
-gy = int.from_bytes(gy_bytes[:-1], "little") # Strip newline, convert
-print(f"     Intercepted GY: {gy}")
+    # remote alice
+    connections['rAlice'] = remote(host_a, port_a)
+    
+    # listen for alice and wait
+    connections['lAlice'] = listen(port_b)
+    connections['lAlice'].wait_for_connection()
 
-# STEP B: Trick Alice
-# Alice is waiting on her listener (to_alice_listener) for a key.
-# We send her our malicious key (GM) pretending it's from Bob.
-print(f"[<-] Sending GM to Alice (pretending to be Bob)...")
-to_alice_listener.sendline(gm.to_bytes(8, "little"))
+    # listen for bob and wait
+    connections['lBob'] = listen(port_a)
+    connections['lBob'].wait_for_connection()
 
-# STEP C: Intercept Alice's GX
-# Alice computes her secret (GM^x), then sends GX to her remote (alice_incoming).
-print("[->] Receiving GX from Alice...")
-gx_bytes = alice_incoming.recvline()
-gx = int.from_bytes(gx_bytes[:-1], "little")
-print(f"     Intercepted GX: {gx}")
+    # remote bob
+    connections['rBob'] = remote(host_b, port_b)
+    
+    return connections
 
-# STEP D: Trick Bob
-# Bob is waiting on his listener (to_bob_listener) for a key.
-# We send him our malicious key (GM) pretending it's from Alice.
-print(f"[<-] Sending GM to Bob (pretending to be Alice)...")
-to_bob_listener.sendline(gm.to_bytes(8, "little"))
+def generate_secret():
+    return random.randint(1, p)
 
-# --- 4. Calculate Secrets ---
+def calc_pub(private_exp):
+    return pow(g, private_exp, p)
 
-# Alice computed: (GM)^x  == (g^m)^x == g^mx
-# MitM computes:  (GX)^m  == (g^x)^m == g^mx
-secret_alice = pow(gx, m, p)
+def bytes_to_int(raw_bytes):
+    return int.from_bytes(raw_bytes, "little")
 
-# Bob computed:   (GM)^y  == (g^m)^y == g^my
-# MitM computes:  (GY)^m  == (g^y)^m == g^my
-secret_bob = pow(gy, m, p)
+def int_to_bytes(num):
+    return num.to_bytes(8, "little")
 
-print("\n" + "="*40)
-print("             ATTACK SUCCESSFUL")
-print("="*40)
-print(f"Alice's Secret (g^mx): {secret_alice}")
-print(f"Bob's Secret   (g^my): {secret_bob}")
-print("="*40)
+def exploit(connections):
+    l_bob = connections['lBob']
+    r_alice = connections['rAlice']
+    l_alice = connections['lAlice']
+    r_bob = connections['rBob']
 
-# Clean up
-listener_alice.close()
-listener_bob.close()
-to_alice_listener.close()
-to_bob_listener.close()
-alice_incoming.close()
-bob_incoming.close()
+    # bob's public key
+    raw_gy = l_bob.recvline()[:-1]
+    gy = bytes_to_int(raw_gy)
+    print("Received GY from Bob:", gy)
+
+    # inject malicious C
+    c = generate_secret()
+    gc = calc_pub(c)
+
+    print("Sending GC to Alice:", gc)
+    r_alice.sendline(int_to_bytes(gc))
+
+    # alice's public key
+    raw_gx = l_alice.recvline()[:-1]
+    gx = bytes_to_int(raw_gx)
+    print("Received GX from Alice:", gx)
+
+    # inject malicious D
+    d = generate_secret()
+    gd = calc_pub(d)
+
+    print("Sending GD to Bob:", gd)
+    r_bob.sendline(int_to_bytes(gd))
+
+    # retrieve shared secrets
+    secret_alice = pow(gx, c, p)
+    secret_bob = pow(gy, d, p)
+
+    print("Shared secret with Alice:", secret_alice)
+    print("Shared secret with Bob:", secret_bob)
+
+def cleanup(connections):
+    if 'lAlice' in connections:
+        connections['lAlice'].close()
+    if 'rAlice' in connections:
+        connections['rAlice'].close()
+
+if __name__ == "__main__":
+    conns = init()
+    try:
+        exploit(conns)
+    finally:
+        cleanup(conns)
