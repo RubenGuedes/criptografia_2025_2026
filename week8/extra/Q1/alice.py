@@ -22,84 +22,78 @@ def recv_all(sock, n):
             return None
         data.extend(packet)
     return data
-
 def secure_send(sock, message, enc_key, mac_key, seq_num):
     """
     Encrypts, MACs, and sends a message.
-    Format: [4-byte LEN][8-byte NONCE][CIPHERTEXT][32-byte MAC]
     """
-    print(f"ALICE (SND): '{message}' (EPOCH={seq_num})")
+    print(f"SENDING: '{message}' (EPOCH={seq_num})")
     
-    # include a sequence number... and append it to the sent message
-    seq_num_bytes = seq_num.to_bytes(SEQ_NUM_SIZE, 'big')
-    plaintext = seq_num_bytes + message.encode('utf-8')
-
-    # AES-128-CTR : encrypt
+    # AES-CTR Encryption
     cipher = AES.new(enc_key, AES.MODE_CTR)
     nonce = cipher.nonce
-    ciphertext = cipher.encrypt(plaintext)
-
-    # HMAC-SHA256 : mac
-    mac = HMAC.new(mac_key, nonce + ciphertext, SHA256).digest()
-
-    # nonce + ciphertext + mac
-    payload = nonce + ciphertext + mac
-
-    # prepend 4-byte length of the payload
-    len_prefix = len(payload).to_bytes(4, 'big')
+    ciphertext = cipher.encrypt(message.encode('utf-8'))
     
-    sock.sendall(len_prefix + payload)
+    # Prepare Sequence Number and Length Prefix
+    seq_bytes = seq_num.to_bytes(SEQ_NUM_SIZE, 'big')
+    mac_size = 32
+    payload_len = len(seq_bytes) + len(nonce) + len(ciphertext) + mac_size
+    len_bytes = payload_len.to_bytes(4, 'big')
+
+    # HMAC Authentication
+    aad = len_bytes + seq_bytes + nonce + ciphertext
+    mac = HMAC.new(mac_key, aad, SHA256).digest()
+
+    # Construct Final Packet
+    # [LEN][SEQ][NONCE][CIPHERTEXT][MAC]
+    final_packet = len_bytes + seq_bytes + nonce + ciphertext + mac
+    
+    sock.sendall(final_packet)
 
 def secure_recv(sock, enc_key, mac_key, expected_seq_num):
     """
-    Receives, verifies, and decrypts a message.
-    Returns the decoded string or throws an exception on failure.
+    Receives, authenticates header/payload, checks sequence, then decrypts.
     """
     
-    # read the 4-byte length prefix
-    len_prefix_bytes = recv_all(sock, 4)
-    if not len_prefix_bytes:
-        raise ConnectionError("Connection closed by peer (reading length).")
+    # Read the length prefix first
+    len_bytes = recv_all(sock, 4)
+    if not len_bytes:
+        raise ConnectionError("Connection closed.")
     
-    payload_len = int.from_bytes(len_prefix_bytes, 'big')
+    payload_len = int.from_bytes(len_bytes, 'big')
 
-    # read the full payload
+    # Read the rest of the packet
     payload = recv_all(sock, payload_len)
     if not payload:
-        raise ConnectionError("Connection closed by peer (reading payload).")
+        raise ConnectionError("Connection closed.")
 
-    # parse the payload : [8-byte NONCE][CIPHERTEXT][32-byte MAC]
-    nonce = payload[:AES_NONCE_SIZE]
+    # Parse payload
+    seq_bytes = payload[:SEQ_NUM_SIZE]
+    nonce = payload[SEQ_NUM_SIZE:SEQ_NUM_SIZE + AES_NONCE_SIZE]
     received_mac = payload[-MAC_SIZE:]
-    ciphertext = payload[AES_NONCE_SIZE:-MAC_SIZE]
+    ciphertext = payload[SEQ_NUM_SIZE + AES_NONCE_SIZE:-MAC_SIZE]
 
-    # verify
-    mac = HMAC.new(mac_key, nonce + ciphertext, SHA256)
+    # Verify HMAC
+    aad = len_bytes + seq_bytes + nonce + ciphertext
+    
+    mac = HMAC.new(mac_key, aad, SHA256)
     try:
         mac.verify(received_mac)
     except ValueError:
-        print("!!! MESSAGE AUTHENTICATION FAILED !!!")
-        raise SecurityException("Received invalid MAC!")
+        print("!!! INTEGRITY FAILURE: Packet tampered (or length modified) !!!")
+        raise SecurityException("Invalid MAC")
 
-    # decrypt
+    # Verify Sequence Number
+    received_seq = int.from_bytes(seq_bytes, 'big')
+    if received_seq != expected_seq_num:
+         print(f"!!! REPLAY/ORDER ATTACK: Exp {expected_seq_num}, Got {received_seq} !!!")
+         raise SecurityException("Invalid Sequence Number")
+
+    # Decrypt
     cipher = AES.new(enc_key, AES.MODE_CTR, nonce=nonce)
-    decrypted_payload = cipher.decrypt(ciphertext)
-
-    # parse the decrypted payload : [8-byte SEQ_NUM][MESSAGE]
+    message = cipher.decrypt(ciphertext).decode('utf-8')
     
-    seq_num_bytes = decrypted_payload[:SEQ_NUM_SIZE]
-    message_bytes = decrypted_payload[SEQ_NUM_SIZE:]
-    
-    received_seq_num = int.from_bytes(seq_num_bytes, 'big')
-
-    if received_seq_num != expected_seq_num:
-        print(f"!!! INVALID EPOCH (Expected: {expected_seq_num}, Got: {received_seq_num}) !!!")
-        raise SecurityException("Invalid sequence number (possible replay attack)") 
-
-    message = message_bytes.decode('utf-8')
-    print(f"ALICE (RCV): '{message}' (EPOCH={received_seq_num})")
+    print(f"RECEIVED: '{message}' (EPOCH={received_seq})")
     return message
-
 
 class SecurityException(Exception):
     pass
